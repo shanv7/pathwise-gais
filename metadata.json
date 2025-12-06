@@ -1,0 +1,8 @@
+{
+  "name": "Pathwise Demo Version",
+  "description": "An executive coaching simulation for practicing difficult conversations.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "prompt": ""
+}
