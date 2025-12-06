@@ -21,7 +21,25 @@ interface TranscriptionItem {
   text: string;
 }
 
-const SCENARIO_SYSTEM_INSTRUCTION = `
+interface Scenario {
+  id: string;
+  name: string;
+  role: string;
+  goal: string;
+  tip: string;
+  initiator: 'ai' | 'user';
+  systemInstruction: string;
+}
+
+const SCENARIOS: Record<string, Scenario> = {
+  'scenario-1': {
+    id: 'scenario-1',
+    name: 'Scenario 1: The Burned-out Employee',
+    role: 'MBA Grad / High Performer',
+    goal: 'Set boundaries with your demanding manager without getting fired.',
+    tip: 'The manager starts at intensity 8/10. Use active listening to de-escalate.',
+    initiator: 'ai',
+    systemInstruction: `
 You are a professional actor in a high-stakes executive coaching simulation called "Conflict Lab". 
 Your goal is to offer an opportunity for your roleplay partner (the User) to practice their conflict management skills.
 
@@ -51,10 +69,14 @@ You can only lower your intensity if the User:
 1. Repeats back your point of view (Active Listening).
 2. Validates your feelings before asking for boundaries.
 
+### INSTRUCTIONS
+You MUST start immediately with the Opening Line below. Do not wait for the user.
+
 ### OPENING LINE
-You MUST start immediately with:
 "I have been really impressed by your ability to deliver under pressure these past few months. You have shown me that you are ready to lead our next major contract. It is a huge opportunity for our firm and I want YOU to drive it. You got this!"
-`;
+`
+  }
+};
 
 @customElement('gdm-live-audio')
 export class GdmLiveAudio extends LitElement {
@@ -62,6 +84,7 @@ export class GdmLiveAudio extends LitElement {
   @state() status = 'Ready to start simulation';
   @state() error = '';
   @state() transcript: TranscriptionItem[] = [];
+  @state() currentScenario: Scenario = SCENARIOS['scenario-1'];
 
   // Audio Contexts & Processing
   private client: GoogleGenAI;
@@ -79,9 +102,9 @@ export class GdmLiveAudio extends LitElement {
   private scriptProcessorNode: ScriptProcessorNode;
   private sources = new Set<AudioBufferSourceNode>();
 
-  // Transcription Buffers
-  private currentInputTranscription = '';
-  private currentOutputTranscription = '';
+  // Transcription Buffers (Reactive)
+  @state() currentInputTranscription = '';
+  @state() currentOutputTranscription = '';
 
   @query('.transcript-container')
   private transcriptContainer: HTMLElement;
@@ -204,6 +227,11 @@ export class GdmLiveAudio extends LitElement {
       animation: fadeIn 0.3s ease;
     }
 
+    .message.streaming {
+      opacity: 0.7;
+      border: 1px dashed rgba(255,255,255,0.3);
+    }
+
     @keyframes fadeIn {
       from { opacity: 0; transform: translateY(5px); }
       to { opacity: 1; transform: translateY(0); }
@@ -321,7 +349,9 @@ export class GdmLiveAudio extends LitElement {
     await this.outputAudioContext.resume();
 
     this.updateStatus('Connecting to Simulation...');
-    this.transcript = []; // Clear previous transcript
+    this.transcript = [];
+    this.currentInputTranscription = '';
+    this.currentOutputTranscription = '';
     
     const model = 'gemini-2.5-flash-native-audio-preview-09-2025';
 
@@ -329,7 +359,7 @@ export class GdmLiveAudio extends LitElement {
       this.sessionPromise = this.client.live.connect({
         model: model,
         callbacks: {
-          onopen: () => {
+          onopen: async () => {
             this.updateStatus('Simulation Active');
             this.startRecordingInternal();
           },
@@ -340,16 +370,18 @@ export class GdmLiveAudio extends LitElement {
               this.playAudioChunk(audio.data);
             }
 
-            // Handle Output Transcription (AI)
+            // Handle Real-time Output Transcription (AI)
             const outputText = message.serverContent?.outputTranscription?.text;
             if (outputText) {
                 this.currentOutputTranscription += outputText;
+                this.scrollToBottom();
             }
 
-            // Handle Input Transcription (User)
+            // Handle Real-time Input Transcription (User)
             const inputText = message.serverContent?.inputTranscription?.text;
             if (inputText) {
                 this.currentInputTranscription += inputText;
+                this.scrollToBottom();
             }
 
             // Handle Turn Completion (Commit transcripts to state)
@@ -386,14 +418,13 @@ export class GdmLiveAudio extends LitElement {
           },
         },
         config: {
-          systemInstruction: SCENARIO_SYSTEM_INSTRUCTION,
+          systemInstruction: this.currentScenario.systemInstruction,
           responseModalities: [Modality.AUDIO],
           speechConfig: {
             voiceConfig: {prebuiltVoiceConfig: {voiceName: 'Puck'}},
           },
-          // Enable Transcriptions
-          inputAudioTranscription: { model: "google-default" },
-          outputAudioTranscription: { model: "google-default" },
+          inputAudioTranscription: {}, 
+          outputAudioTranscription: {},
         },
       });
 
@@ -441,14 +472,15 @@ export class GdmLiveAudio extends LitElement {
   private addTranscriptItem(sender: 'user' | 'ai', text: string) {
     // Create a new array reference to trigger Lit reactivity
     this.transcript = [...this.transcript, { sender, text }];
-    this.requestUpdate();
-    
-    // Auto-scroll
+    this.scrollToBottom();
+  }
+
+  private scrollToBottom() {
     setTimeout(() => {
         if (this.transcriptContainer) {
             this.transcriptContainer.scrollTop = this.transcriptContainer.scrollHeight;
         }
-    }, 100);
+    }, 10);
   }
 
   private updateStatus(msg: string) {
@@ -532,28 +564,44 @@ export class GdmLiveAudio extends LitElement {
         <!-- Scenario Context Card -->
         <div class="scenario-card">
           <h1>Conflict Lab</h1>
-          <p style="opacity: 0.7; font-style: italic;">Scenario 1: The Burned-out Employee</p>
+          <p style="opacity: 0.7; font-style: italic;">${this.currentScenario.name}</p>
           
           <h2>Your Role</h2>
-          <p>You are a talented MBA grad who has been working 9am-10pm daily for months. You are exhausted.</p>
+          <p>${this.currentScenario.role}</p>
 
           <h2>Your Goal</h2>
-          <p>Your manager (the AI) is about to ask you to lead a huge new project. <strong>You must set boundaries</strong> for your mental health while maintaining the relationship.</p>
+          <p>${this.currentScenario.goal}</p>
           
           <h2>Tip</h2>
-          <p>The manager will start at intensity 8/10. Use active listening to de-escalate.</p>
+          <p>${this.currentScenario.tip}</p>
         </div>
 
         <!-- Transcript Panel -->
         <div class="transcript-panel">
             <div class="transcript-header">Live Transcript</div>
             <div class="transcript-container">
+                <!-- Committed History -->
                 ${this.transcript.map(item => html`
                     <div class="message ${item.sender}">
                         <div class="label">${item.sender === 'ai' ? 'Manager' : 'You'}</div>
                         ${item.text}
                     </div>
                 `)}
+
+                <!-- Streaming Inputs (Ghost Bubbles) -->
+                ${this.currentOutputTranscription ? html`
+                    <div class="message ai streaming">
+                        <div class="label">Manager (Speaking...)</div>
+                        ${this.currentOutputTranscription}
+                    </div>
+                ` : ''}
+
+                ${this.currentInputTranscription ? html`
+                    <div class="message user streaming">
+                        <div class="label">You (Speaking...)</div>
+                        ${this.currentInputTranscription}
+                    </div>
+                ` : ''}
             </div>
         </div>
 
